@@ -6,7 +6,7 @@ from datetime import datetime
 # --- Configuration ---
 input_file_name = 'results.json'
 output_file_name = 'parsed_restaurants_paris.json'
-error_log_file = 'parsing_errors.log'  # New: Log file for problematic items
+error_log_file = 'parsing_errors.log'
 # -------------------
 
 def log_error(message, item=None):
@@ -30,7 +30,8 @@ def parse_restaurant_item(item, index, total_items):
         "cuisines_features": [],
         "description": None,
         "phone_number": None,
-        "address": None
+        "address": None,
+        "reviews": []  # New: List to store reviews
     }
 
     try:
@@ -60,7 +61,7 @@ def parse_restaurant_item(item, index, total_items):
         if len(lines) >= 3:
             restaurant_data["establishment_type"] = lines[2]
 
-        # --- Step 2: Parse bottom elements ---
+        # --- Step 2: Parse bottom elements (phone, address, reviews) ---
         read_reviews_idx = -1
         for i_line, line in enumerate(lines):
             if "Read Reviews" in line:
@@ -105,7 +106,6 @@ def parse_restaurant_item(item, index, total_items):
             # Remaining content: cuisines/features and description
             remaining_content = " ".join(middle_content_lines[current_middle_idx:]).strip()
             if remaining_content:
-                # Try to split cuisines (comma-separated) from description
                 cuisines_desc_match = re.match(
                     r"((?:[A-Za-z0-9\-\/ ]+(?:,\s*)?)+?)\s*([A-Z].*)?",
                     remaining_content,
@@ -116,17 +116,67 @@ def parse_restaurant_item(item, index, total_items):
                     restaurant_data["cuisines_features"] = [c.strip() for c in cuisines_raw.split(',') if c.strip()]
                     restaurant_data["description"] = cuisines_desc_match.group(2).strip() if cuisines_desc_match.group(2) else None
                 else:
-                    # Fallback: check for commas
                     if ',' in remaining_content:
                         restaurant_data["cuisines_features"] = [c.strip() for c in remaining_content.split(',') if c.strip()]
                     else:
                         restaurant_data["description"] = remaining_content
+
+        # --- Step 4: Parse reviews ---
+        if "reviews" in item and item["reviews"]:
+            reviews = item["reviews"]
+            if isinstance(reviews, list):
+                # Handle case where reviews is a list of strings or dictionaries
+                for review in reviews:
+                    if isinstance(review, dict):
+                        # Expect keys like 'text', 'rating', 'date' (if available)
+                        restaurant_data["reviews"].append({
+                            "text": review.get("text", ""),
+                            "rating": float(review["rating"]) if review.get("rating") else None,
+                            "date": review.get("date")
+                        })
+                    elif isinstance(review, str):
+                        # Handle plain text reviews
+                        restaurant_data["reviews"].append({"text": review.strip()})
+            elif isinstance(reviews, str):
+                # Handle reviews as a single text block
+                review_lines = [r.strip() for r in reviews.split('\n') if r.strip()]
+                restaurant_data["reviews"] = [{"text": r} for r in review_lines]
+        else:
+            log_error(f"Item {index+1}: No reviews found or empty reviews field.")
 
         return restaurant_data
 
     except Exception as e:
         log_error(f"Item {index+1} processing failed: {str(e)}", item)
         return None
+
+def remove_null_fields(parsed_restaurants):
+    """Remove fields that are null for all items, unless at least one item has a non-null value."""
+    if not parsed_restaurants:
+        return parsed_restaurants
+
+    # Get all possible fields from the first restaurant
+    fields = list(parsed_restaurants[0].keys())
+    fields_to_remove = []
+
+    # Check each field
+    for field in fields:
+        all_null = True
+        for restaurant in parsed_restaurants:
+            if restaurant[field] is not None and not (
+                isinstance(restaurant[field], (list, dict)) and not restaurant[field]
+            ):
+                all_null = False
+                break
+        if all_null:
+            fields_to_remove.append(field)
+
+    # Remove fields that are null for all items
+    for restaurant in parsed_restaurants:
+        for field in fields_to_remove:
+            restaurant.pop(field, None)
+
+    return parsed_restaurants
 
 def main():
     parsed_restaurants = []
@@ -151,7 +201,6 @@ def main():
         print(f"Found {total_items} restaurant entries to process.")
 
         for i, item in enumerate(data["selection1"]):
-            # Periodic progress update (every 10% or 100 items)
             if (i + 1) % max(100, total_items // 10) == 0 or i == total_items - 1:
                 progress_percentage = ((i + 1) / total_items) * 100
                 print(f"Processing: {progress_percentage:.2f}% ({i + 1}/{total_items} items processed)")
@@ -163,6 +212,9 @@ def main():
         if not parsed_restaurants:
             print("Error: No valid restaurant data parsed.")
             return
+
+        # Remove fields that are null for all items
+        parsed_restaurants = remove_null_fields(parsed_restaurants)
 
         # Save output
         output_json = json.dumps(parsed_restaurants, indent=2, ensure_ascii=False)
