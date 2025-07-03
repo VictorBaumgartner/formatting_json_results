@@ -5,7 +5,7 @@ import os
 # --- Configuration ---
 # Set the name of your ParseHub output JSON file.
 # By default, this script expects the file to be in the same directory where you run the script.
-input_file_name = 'results.json' 
+input_file_name = 'parsehub_output.json'
 output_file_name = 'parsed_restaurants_paris.json'
 # -------------------
 
@@ -16,6 +16,8 @@ try:
     current_working_directory = os.getcwd()
     input_file_path = os.path.join(current_working_directory, input_file_name)
 
+    print(f"Attempting to load data from: {input_file_path}")
+
     # Load the JSON data from the specified input file path
     with open(input_file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -24,7 +26,15 @@ try:
     if "selection1" not in data or not isinstance(data["selection1"], list):
         print(f"Error: Input JSON does not contain a 'selection1' list as expected.")
     else:
-        for item in data["selection1"]:
+        total_items = len(data["selection1"])
+        print(f"Found {total_items} restaurant entries to process.")
+
+        for i, item in enumerate(data["selection1"]):
+            # Print progress as a percentage
+            progress_percentage = ((i + 1) / total_items) * 100
+            if (i + 1) % 100 == 0 or (i + 1) == total_items: # Print every 100 items or at the end
+                print(f"Processing: {progress_percentage:.2f}% ({i + 1}/{total_items} items processed)")
+
             # Check if 'name' key exists in the item
             if "name" not in item:
                 print(f"Warning: Item missing 'name' key, skipping: {item}")
@@ -68,9 +78,9 @@ try:
             
             # Find the index of "Read Reviews" to anchor the bottom parsing
             read_reviews_idx = -1
-            for i, line in enumerate(lines):
+            for i_line, line in enumerate(lines): # Renamed loop variable to avoid conflict with outer 'i'
                 if "Read Reviews" in line:
-                    read_reviews_idx = i
+                    read_reviews_idx = i_line
                     break
                     
             if read_reviews_idx != -1:
@@ -164,6 +174,9 @@ except FileNotFoundError:
     print(f"Error: Input file not found at '{input_file_path}'. Please ensure the file '{input_file_name}' is in the same directory as the script, or provide its full path.")
 except json.JSONDecodeError:
     print(f"Error: Could not decode JSON from '{input_file_path}'. Please ensure it's a valid JSON file.")
+except KeyboardInterrupt:
+    print("\nScript interrupted by user (KeyboardInterrupt).")
+    print(f"Partial data (if any) was not saved. Please run the script again without interruption.")
 except Exception as e:
     print(f"An unexpected error occurred: {e}")
 
